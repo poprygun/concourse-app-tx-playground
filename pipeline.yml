@@ -1,0 +1,185 @@
+---
+common-params: &common-params
+  _JAVA_OPTIONS: -Djava.security.egd=file:/dev/./urandom
+  APP_MEMORY_LIMIT: ((app-memory-limit))
+  BUILD_OPTIONS: ((build-options))
+  GIT_EMAIL: ((git-email))
+  GIT_NAME: ((git-name))
+  M2_SETTINGS_REPO_ID: ((m2-settings-repo-id))
+  M2_SETTINGS_REPO_PASSWORD: ((m2-settings-repo-password))
+  M2_SETTINGS_REPO_USERNAME: ((m2-settings-repo-username))
+  PAAS_TYPE: ((paas-type))
+  REPO_WITH_BINARIES: ((repo-with-binaries))
+  REPO_WITH_SNAPSHOT_BINARIES: ((repo-with-snaphost-binaries))
+
+paas-prod-params: &paas-prod-params
+  PAAS_PROD_API_URL: ((paas-prod-api-url))
+  PAAS_PROD_ORG: ((paas-prod-org))
+  PAAS_PROD_PASSWORD: ((paas-prod-password))
+  PAAS_PROD_SPACE: ((paas-prod-space))
+  PAAS_PROD_USERNAME: ((paas-prod-username))
+
+paas-stage-params: &paas-stage-params
+  PAAS_STAGE_API_URL: ((paas-stage-api-url))
+  PAAS_STAGE_ORG: ((paas-stage-org))
+  PAAS_STAGE_PASSWORD: ((paas-stage-password))
+  PAAS_STAGE_SPACE: ((paas-stage-space))
+  PAAS_STAGE_USERNAME: ((paas-stage-username))
+
+paas-test-params: &paas-test-params
+  PAAS_TEST_API_URL: ((paas-test-api-url))
+  PAAS_TEST_ORG: ((paas-test-org))
+  PAAS_TEST_PASSWORD: ((paas-test-password))
+  PAAS_TEST_SPACE: ((paas-test-space))
+  PAAS_TEST_USERNAME: ((paas-test-username))
+
+resources:
+- name: repo-develop
+  type: git
+  source:
+    uri: ((app-url))
+    branch: master
+    private_key: ((github-private-key))
+
+# Version file defined in the version-snapshot branch of the app
+- name: version-snapshot
+  type: git
+  source:
+    uri: ((app-url))
+    branch: version-snapshot
+    private_key: ((github-private-key))
+
+- name: tools
+  type: git
+  source:
+    uri: ((tools-scripts-url))
+    branch: ((tools-branch))
+
+# - name: m2
+#   type: docker-image
+#   source:
+#     repository: springcloud/spring-pipeline-m2
+
+jobs:
+- name: build-and-upload
+  serial: true
+  public: false
+  plan:
+  - in_parallel:
+    - get: tools
+    - get: repo
+      resource: repo-develop
+      trigger: true
+    - get: version
+      resource: version-snapshot
+  - task: get-version  # Retrieve the project version for this build
+    file: tools/tasks/get-version/task.yml
+    params:
+      GIT_EMAIL: ((git-email))
+      GIT_NAME: ((git-name))
+  - put: version       # Update the version if the project version changed
+    resource: version-snapshot
+    params:
+      repository: updated-version
+  - task: build-and-upload
+    file: tools/tasks/build-and-upload/task.yml
+    params:
+      <<: *common-params
+
+- name: build-api-compatibility-check
+  serial: true
+  public: false
+  plan:
+  - in_parallel:
+    - get: tools
+    - get: repo
+      resource: repo-develop
+      passed:
+      - build-and-upload
+      trigger: true
+    - get: version
+      resource: version-snapshot
+  - task: build-api-compatibility-check
+    file: tools/tasks/build-api-compatibility-check/task.yml
+    params:
+      <<: *common-params
+
+- name: test-deploy
+  serial: true
+  public: false
+  plan:
+  - in_parallel:
+    - get: tools
+    - get: repo
+      resource: repo-develop
+      passed:
+      - build-api-compatibility-check
+      trigger: true
+    - get: version
+      resource: version-snapshot
+  - task: test-deploy
+    file: tools/tasks/test-deploy/task.yml
+    params:
+      <<: *common-params
+      <<: *paas-test-params
+      PAAS_HOSTNAME_UUID: ((paas-hostname-uuid))
+      JAVA_BUILDPACK_URL: ((java-buildpack-url))
+
+- name: test-smoke
+  serial: true
+  public: false
+  plan:
+  - in_parallel:
+    - get: tools
+    - get: repo
+      resource: repo-develop
+      passed:
+      - test-deploy
+      trigger: true
+    - get: version
+      resource: version-snapshot
+  - task: test-smoke
+    file: tools/tasks/test-smoke/task.yml
+    params:
+      <<: *common-params
+      <<: *paas-test-params
+
+- name: test-rollback-deploy
+  serial: true
+  public: false
+  plan:
+  - in_parallel:
+    - get: tools
+    - get: repo
+      resource: repo-develop
+      passed:
+      - test-smoke
+      trigger: true
+    - get: version
+      resource: version-snapshot
+  - task: test-rollback-deploy
+    file: tools/tasks/test-rollback-deploy/task.yml
+    params:
+      <<: *common-params
+      <<: *paas-test-params
+      PAAS_HOSTNAME_UUID: ((paas-hostname-uuid))
+
+- name: test-rollback-smoke
+  serial: true
+  public: false
+  plan:
+  - in_parallel:
+    - get: tools
+    - get: repo
+      resource: repo-develop
+      passed:
+      - test-rollback-deploy
+      trigger: true
+    - get: version
+      resource: version-snapshot
+  - task: test-rollback-smoke
+    file: tools/tasks/test-rollback-smoke/task.yml
+    params:
+      <<: *common-params
+      <<: *paas-test-params
+

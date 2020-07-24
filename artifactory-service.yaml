@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: artifactory
+    app.kubernetes.io/managed-by: Helm
+    chart: artifactory-10.0.7
+    component: nginx
+    heritage: Helm
+    release: artifactory-1595519775
+  name: my-artifactory
+spec:
+  ports:
+  - name: port-1
+    port: 80
+    protocol: TCP
+    targetPort: 80 
+    nodePort: 30080  
+  - name: port-2
+    port: 443
+    protocol: TCP
+    targetPort: 443
+    nodePort: 30443    
+  type: NodePort  
+  selector:
+    app: artifactory
+    component: nginx
+    release: artifactory-1595519775
+status:
+  loadBalancer: {}
